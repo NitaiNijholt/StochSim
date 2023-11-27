@@ -86,17 +86,25 @@ class MultiServer:
         '''
 
         # Determine service time
-        if self.deterministic: 
+        if self.deterministic:
+            # Constant process time 
             process_time = self.mu
         else:
             if self.hyper_prob:
+                # Draw from hyper-exponential distribution
                 choose_distribution = np.random.uniform(0, 1)
                 if choose_distribution < self.hyper_prob:
                     process_time = np.random.exponential(self.beta_service)
                 else:
                     process_time = np.random.exponential(self.beta_service2)
             else:
+                # Draw from exponential distribution
                 process_time = np.random.exponential(self.beta_service)
         
         yield self.env.timeout(process_time)
 
+
+# env = simpy.Environment()
+# server = MultiServer(env, 2, 0.8, 1, True)
+# env.process(server.setup_sim(True))
+# env.run(until=50)
