@@ -7,7 +7,7 @@ class MultiServer:
     '''Class for a M/M/n queue system server
     '''
 
-    def __init__(self, env, n, labmda_rate, mu):
+    def __init__(self, env, n, lambda_rate, mu):
         '''Initializes the class using the following inputs:
         env - a SimPy environment
         n - number of servers in the system
@@ -16,22 +16,28 @@ class MultiServer:
         '''
         
         self.env = env
-        self.lambda_rate = labmda_rate
+        self.lambda_rate = lambda_rate
         self.mu = mu
+        self.rho = self.lambda_rate / (n * self.mu)
+        print(f"Created system with {n} servers and load {self.rho}.")
 
-        # Beta parameter for exponential distribution
-        self.beta = 1 / labmda_rate
+        # Beta parameter for exponential distributions
+        self.beta_arrival = 1 / lambda_rate
+        self.beta_service = 1 / mu
 
         # Create resource with capacity n
         self.processor = simpy.Resource(env, capacity=n)
 
         # Create list for processed jobs dictionaries
-        self.jobs = pd.DataFrame(columns=["ID", "arr_time", "proc_time", "leave_time"])
+        self.jobs = pd.DataFrame(columns=["jobID", "arr_time", "proc_time", "leave_time", "wait_delta"])
     
 
-    def setup_sim(self):
-        '''Set up simulation
+    def setup_sim(self, print_progress=False):
+        '''Set up simulation. If print_progress is True,
+        the simulation events are printed on the go
         '''
+
+        self.print = print_progress
         
         job_count = itertools.count()
 
@@ -41,7 +47,7 @@ class MultiServer:
 
         # Simulate queue
         while True:
-            inter_t = np.random.exponential(self.lambda_rate)
+            inter_t = np.random.exponential(self.beta_arrival)
 
             # New job arrival at queue
             job_index = next(job_count)
@@ -53,20 +59,21 @@ class MultiServer:
         '''Creates job request at server
         '''
 
-        print(f"Job {request_id} arrives at queue at time {self.env.now}")
-        # self.jobs.append(dict("{:04d}".format(request_id)))
-        self.jobs.iloc[request_id]["ID"] = "{:04d}".format(request_id)
-        self.jobs.iloc[request_id]["arr_time"] = self.env.now
+        if self.print: print(f"Job {request_id} arrives at queue at time {self.env.now}")
+        self.jobs.loc[request_id] = [None, None, None, None, None]
+        self.jobs["jobID"].loc[request_id] = "{:04d}".format(request_id)
+        self.jobs["arr_time"].loc[request_id] = self.env.now
 
         with self.processor.request() as request:
             yield request
-
-            print(f"Job {request_id} is starting to be processed at time {self.env.now}")
             
-            self.jobs.iloc[request_id]["proc_time"] = self.env.now
+            if self.print: print(f"Job {request_id} is starting to be processed at time {self.env.now}")
+            
+            self.jobs["proc_time"].loc[request_id] = self.env.now
+            self.jobs["wait_delta"].loc[request_id] = self.env.now - self.jobs["arr_time"].loc[request_id]
             yield self.env.process(self.job_process())
-            print(f"Job {request_id} is finished at {self.env.now}")
-            self.jobs.iloc[request_id]["leave_time"] = self.env.now
+            if self.print: print(f"Job {request_id} is finished at {self.env.now}")
+            self.jobs["leave_time"].loc[request_id]= self.env.now
     
 
     def job_process(self):
@@ -75,14 +82,6 @@ class MultiServer:
         with parameter mu
         '''
 
-        process_time = np.random.exponential(self.mu)
+        process_time = np.random.exponential(self.beta_service)
         yield self.env.timeout(process_time)
 
-
-env = simpy.Environment()
-server = MultiServer(env, 1, 0.5, 0.8)
-
-env.process(server.setup_sim())
-env.run(until=100)
-
-print(server.jobs)
