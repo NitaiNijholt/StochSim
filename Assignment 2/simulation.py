@@ -111,14 +111,14 @@ class MultiServer:
         yield self.env.timeout(process_time)
 
 
-class MultiServerPriority():
+class MultiServerPriority(MultiServer):
     '''Class for a M/M/n queue system server using job priorities
     '''
 
     def __init__(self, env, n, lambda_rate, mu, deterministic=False, hyper_prob=None, mu2=None):
         '''Extends initialisation function of super-class with a priority-resourse server
         '''
-        super(MultiServer, self).__init__(self, env, n, lambda_rate, mu, deterministic, hyper_prob, mu2)
+        super(MultiServerPriority, self).__init__(env, n, lambda_rate, mu, deterministic, hyper_prob, mu2)
 
         self.processor = simpy.PriorityResource(env, capacity=n)
 
@@ -148,6 +148,29 @@ class MultiServerPriority():
             if self.print: print(f"Job {request_id} is finished at {self.env.now}")
             self.jobs["leave_time"].loc[request_id]= self.env.now
 
+
+def run_simulation(queue_type, n, sim_ID, runtime=100, **queue_params):
+    '''Creates a queuing system model or input type
+    and runs a simulation on it for predefined time
+    '''
+
+    env = simpy.Environment()
+    
+    match queue_type:
+        case 'M/M/n': server = MultiServer(env, n=n, lambda_rate=queue_params['lambda_rate']*n, mu=queue_params['mu'])
+        case 'M/M/n-Priority': server = MultiServerPriority(env, n=n, lambda_rate=queue_params['lambda_rate']*n, mu=queue_params['mu'])
+        case 'M/D/n': server = MultiServer(env, n=n, lambda_rate=queue_params['lambda_rate']*n, mu=queue_params['mu'], deterministic=True)
+        case 'M/H/n': server = MultiServer(env, n=n, lambda_rate=queue_params['lambda_rate']*n, mu=queue_params['mu'], hyper_prob=queue_params['hyper_prob'], mu2=queue_params['mu2'])
+        case _: print("Model type error.")
+
+    env.process(server.setup_sim(print_progress=False))
+    env.run(until=runtime)
+    run_results = server.jobs
+    run_results.insert(0, 'simID', np.full(server.jobs.shape[0], sim_ID))
+    run_results.insert(0, 'rho', np.full(server.jobs.shape[0], queue_params['lambda_rate']/queue_params['mu']))
+    run_results.insert(0, 'n', np.full(server.jobs.shape[0], n))
+
+    return run_results
 
 # env = simpy.Environment()
 # server = MultiServer(env, 2, 0.8, 1, True)
