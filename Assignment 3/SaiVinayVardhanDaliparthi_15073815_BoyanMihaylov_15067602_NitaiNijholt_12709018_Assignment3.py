@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from matplotlib import patches
 from itertools import combinations
 
+
+# ===== Particle operation functions =====
 def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1):
     """
     Calculate the electrostatic force between two particles and
@@ -105,6 +107,7 @@ def initialise_positions_random(n_particles, radius):
     return np.array(positions)
 
 
+# ===== Particle movement functions =====
 def initialise_particle_dict_random(n_particles, radius):
     """Initialises random particle positions, calculates and assigns
     the force vectors and energies per particle and stores the
@@ -127,6 +130,21 @@ def initialise_particle_dict_random(n_particles, radius):
     particle_dict = {'positions': positions, 'energies': energies, 'forces': forces}
 
     return particle_dict
+
+
+def update_particle_dict(particle_dict, pos, i):
+    """Updates the particle dictionary based on new position at a specific index
+
+    Args:
+        particle_dict (dict): An object containing the positions, forces and energies of all particles
+        pos (numpy.ndarray): The new position of the particle
+        i (int): The index of the particle to update
+    """
+
+    particle_dict['positions'][i] = pos
+    energies, forces = get_energy_forces_total(particle_dict['positions'])
+    particle_dict['energies'] = energies
+    particle_dict['forces'] = forces
 
 
 def limit_displacement_to_circle_bnd(pts, vecs, rad):
@@ -194,13 +212,32 @@ def reflect_at_circle_bounds(pts, vecs, rad):
     return reflect_pts
 
 
-def move_particle_radial(particle_dict, radius=1, movement_scaler=1, move_mode = 'random absolute', step_scale=None):
+def move_particle(particle_dict, radius=1, movement_scaler=1, move_mode = 'random absolute'):
     """Takes an array of particle dictionaries and displaces the
     particle positions along the particle velocity vectors.
     Updates forces and energies once the displacement is done
     """
+    
+    new_positions = np.array(particle_dict['positions'])
 
-    if move_mode == 'random absolute':
+    if move_mode == 'random cartesian':  # Random cartesian coordinates (hit and miss) within circle
+
+        # Determine target position by randomly cartesian coordinates within enclosing square
+        # Accept the ones within the circle
+        for i in range(particle_dict['positions'].shape[0]):
+            while True:
+                x_new, y_new = np.random.uniform(-radius, radius, size=2)
+                if in_circle((x_new, y_new), radius):
+                    break
+
+            pos_new = np.array([x_new, y_new])
+
+            # Scale perturbation vector by movement scaler
+            delta_vec = (pos_new - particle_dict['positions'][i]) * movement_scaler
+
+            new_positions[i] += delta_vec
+
+    elif move_mode == 'random polar absolute':  # Random polar coordinates within circle
 
         # Determine target position by randomly sampling polar coordinates within global circle
         theta_new = np.random.uniform(0, 2*np.pi, particle_dict['positions'].shape[0])
@@ -216,7 +253,7 @@ def move_particle_radial(particle_dict, radius=1, movement_scaler=1, move_mode =
 
         particle_dict['positions'] += delta_vec
     
-    elif move_mode == 'random relative':
+    elif move_mode == 'random polar relative':  # Random polar coordinates relative to current position
         
         # Create random polar perturbation vector around current position
         delta_theta = np.random.uniform(0, 2*np.pi, particle_dict['positions'].shape[0])
@@ -228,18 +265,28 @@ def move_particle_radial(particle_dict, radius=1, movement_scaler=1, move_mode =
         delta_vec = np.vstack((delta_x, delta_y)).T * movement_scaler
 
         # particle_dict['positions'] += delta_vec
-        particle_dict['positions'] = reflect_at_circle_bounds(particle_dict['positions'], particle_dict['forces'] * movement_scaler, radius)
+        new_positions = reflect_at_circle_bounds(particle_dict['positions'], particle_dict['forces'] * movement_scaler, radius)
 
     elif move_mode == 'repell':
 
-        particle_dict['positions'] = reflect_at_circle_bounds(particle_dict['positions'], particle_dict['forces'] * movement_scaler, radius)
+        # Normalise force vectors
+        force_vecs = particle_dict['forces'] / np.linalg.norm(particle_dict['forces'], axis=1)[:, np.newaxis]
 
-    # Update energies / forces
-    energies, forces = get_energy_forces_total(particle_dict['positions'])
-    particle_dict['energies'] = energies
-    particle_dict['forces'] = forces
+        new_positions = reflect_at_circle_bounds(particle_dict['positions'], particle_dict['forces'] * movement_scaler, radius)
+
+    else:
+        raise ValueError("move_mode must be one of 'random cartesian', 'random polar absolute', 'random polar relative'")
+
+    return new_positions
 
 
+def particle_dict_element(particle_dict, i):
+    """Returns a dictionary containing the position, energy and force of a single particle
+    """
+    return {'position': particle_dict['positions'][i], 'energy': particle_dict['energies'][i], 'force': particle_dict['forces'][i]}
+
+
+# ===== Particle visualisation functions =====
 def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Particle positions and velocities", ax=None):
     """Creates a plot visualising the particle positions and velocities
     """
@@ -251,7 +298,7 @@ def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Parti
     
     # Visualise particle positions
     coords = particle_dict['positions'].T
-    artist = ax.scatter(coords[0], coords[1], s=10, c=particle_dict['energies'])
+    ax.scatter(coords[0], coords[1], s=10, c=particle_dict['energies'])
 
     # Visualise particle forces
     # ax.quiver(coords[0], coords[1], force_vecs[0], force_vecs[1], particle_dict['energies'], width=0.005, angles='xy')
@@ -280,3 +327,70 @@ def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Parti
     if not ax:
         # Show the plot
         plt.show()
+
+
+# ===== Cooling schedule functions =====
+def logarithmic_decay_cooling(T_init, t, a, b):
+    """https://canvas.uva.nl/courses/39303/pages/lecture-09-the-gibbs-sampler-and-simulated-annealing?module_item_id=1830823 slide 14"""
+    T_n = a/(np.log(t+b))
+    return T_n
+
+def exponential_decay_cooling(T_init, t, a, b):
+    return T_init * (a ** t)
+
+
+# ====== Simulated annealing function ======
+def sim_annealing_move_particles(particle_dict, time_range, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, movement_func=move_particle, mode='normal', move_mode='random', movement_scaler=1):
+    """
+    Perform simulated annealing to update particle positions within a specified radius.
+    Each iteration in the time_range represents a single particle movement.
+    """
+
+    if cooling_function is None:
+        raise ValueError("cooling_function must be provided")
+
+    T = T_init
+    total_energy_over_time = np.zeros(time_range)
+    positions_over_time = np.zeros((time_range + 1, particle_dict['positions'].shape[0], 2))
+
+    mc_index = 0 # Markov chain index
+    for t in range(time_range):
+        
+        # Optionally decrease the movement scaler over time for 'incremental drop-off' mode
+        if move_mode == 'incremental drop-off':
+            movement_scaler /= (1 + t / time_range)
+        
+        # At each full Markov chain cycle, sort indices of particles to move based on the mode
+        if t % particle_dict['positions'].shape[0] == 0:
+            mc_index = 0
+            if mode == 'random':
+                particle_indices = np.random.randint(particle_dict['positions'].shape[0])
+            elif mode == 'energy':
+                particle_indices = np.argsort(particle_dict['energies'])
+            else:
+                particle_indices = np.arange(particle_dict['positions'].shape[0])  # Cycle through particles for 'normal' mode
+
+        positions_over_time[t] = particle_dict['positions'].copy()
+        p_index = particle_indices[mc_index]
+        particle_selection = particle_dict_element(particle_dict, p_index)
+        total_energy_old = np.sum(particle_dict['energies'])
+
+        # Generate a new position for the particle
+        new_pos_proposal = movement_func(particle_selection, radius, movement_scaler, move_mode)
+        total_energy_new = np.sum(particle_dict['energies'])
+
+        # Probabilistic acceptance of new position
+        k = 1  # Boltzmann constant (normalized)
+        alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
+        if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
+            update_particle_dict(particle_dict, new_pos_proposal, p_index)
+
+        total_energy_over_time[t] = np.sum(particle_dict['energies'])
+        T = cooling_function(T, t, a, b)
+        print('timestep (t):', t)
+
+        mc_index += 1
+
+    positions_over_time[-1] = particle_dict['positions'].copy()
+
+    return positions_over_time, total_energy_over_time
