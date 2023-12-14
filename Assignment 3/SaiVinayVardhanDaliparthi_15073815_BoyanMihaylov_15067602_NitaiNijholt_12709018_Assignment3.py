@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import patches
-from itertools import combinations
+from itertools import combinations, product
+import pandas as pd
 
 def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1):
     """
@@ -105,6 +106,10 @@ def initialise_positions_random(n_particles, radius):
     return np.array(positions)
 
 
+<<<<<<< Updated upstream
+=======
+# ===== Particle update functions =====
+>>>>>>> Stashed changes
 def initialise_particle_dict_random(n_particles, radius):
     """Initialises random particle positions, calculates and assigns
     the force vectors and energies per particle and stores the
@@ -194,7 +199,11 @@ def reflect_at_circle_bounds(pts, vecs, rad):
     return reflect_pts
 
 
+<<<<<<< Updated upstream
 def move_particle_radial(particle_dict, radius=1, movement_scaler=1, move_mode = 'random absolute', step_scale=None):
+=======
+def move_particle(particle_dict, radius=1, movement_scaler=1, move_mode = 'repell'):
+>>>>>>> Stashed changes
     """Takes an array of particle dictionaries and displaces the
     particle positions along the particle velocity vectors.
     Updates forces and energies once the displacement is done
@@ -240,6 +249,19 @@ def move_particle_radial(particle_dict, radius=1, movement_scaler=1, move_mode =
     particle_dict['forces'] = forces
 
 
+<<<<<<< Updated upstream
+=======
+def particle_dict_element(particle_dict, i):
+    """Returns a dictionary containing the position, energy and force of a single particle
+    """
+    selection_dict = {}
+    for keys in particle_dict.keys():
+        selection_dict[keys] = np.array([particle_dict[keys][i]])
+    return selection_dict
+
+
+# ===== Particle visualisation functions =====
+>>>>>>> Stashed changes
 def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Particle positions and velocities", ax=None):
     """Creates a plot visualising the particle positions and velocities
     """
@@ -269,8 +291,8 @@ def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Parti
     ax.set_aspect('equal', adjustable='box')
 
     # Limit axis ranges
-    ax.set_xlim((-1.25, 1.25))
-    ax.set_ylim((-1.25, 1.25))
+    ax.set_xlim((-1.25*radius, 1.25*radius))
+    ax.set_ylim((-1.25*radius, 1.25*radius))
 
     # Setting labels and title
     ax.set_xlabel('X-axis')
@@ -279,4 +301,148 @@ def visualise_particles(particle_dict, radius=1, movement_scaler=1, title="Parti
 
     if not ax:
         # Show the plot
+<<<<<<< Updated upstream
         plt.show()
+=======
+        plt.show()
+
+
+# ===== Cooling schedule functions =====
+def logarithmic_decay_cooling(T_init, t, a, b):
+    """https://canvas.uva.nl/courses/39303/pages/lecture-09-the-gibbs-sampler-and-simulated-annealing?module_item_id=1830823 slide 14"""
+    T_n = a/(np.log(t+b))
+    return T_n
+
+def exponential_decay_cooling(T_init, t, a, b):
+    return T_init * (a ** t)
+
+
+# ====== Simulated annealing function ======
+def sim_annealing_move_particles(particle_dict, time_range, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1):
+    """
+    Perform simulated annealing to update particle positions within a specified radius.
+    Each iteration in the time_range represents a single particle movement.
+    """
+
+    if cooling_function is None:
+        raise ValueError("cooling_function must be provided")
+
+    T = T_init
+    total_energy_over_time = np.zeros(time_range)
+    positions_over_time = np.zeros((time_range + 1, particle_dict['positions'].shape[0], 2))
+
+    mc_index = 0 # Markov chain index
+    for t in range(time_range):
+        
+        # Optionally decrease the movement scaler over time for 'incremental drop-off' mode
+        if move_mode == 'incremental drop-off':
+            movement_scaler /= (1 + t / time_range)
+        
+        # At each full Markov chain cycle, sort indices of particles to move based on the mode
+        if t % particle_dict['positions'].shape[0] == 0:
+            mc_index = 0
+            if sort_mode == 'random':
+                particle_indices = np.random.permutation(np.arange(particle_dict['positions'].shape[0]))
+            elif sort_mode == 'energy':
+                particle_indices = np.argsort(particle_dict['energies'])
+            else:
+                particle_indices = np.arange(particle_dict['positions'].shape[0])  # Cycle through particles for 'normal' mode
+
+        positions_over_time[t] = particle_dict['positions'].copy()
+        p_index = particle_indices[mc_index]
+        particle_selection = particle_dict_element(particle_dict, p_index)
+        total_energy_old = np.sum(particle_dict['energies'])
+
+        # Generate a new position for the particle
+        new_pos_proposal = movement_func(particle_selection, radius, movement_scaler, move_mode)
+        total_energy_new = np.sum(particle_dict['energies'])
+
+        # Probabilistic acceptance of new position
+        k = 1  # Boltzmann constant (normalized)
+        alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
+        if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
+            update_particle_dict(particle_dict, new_pos_proposal, p_index)
+
+        total_energy_over_time[t] = np.sum(particle_dict['energies'])
+        T = cooling_function(T, t, a, b)
+        print('timestep (t):', t)
+
+        mc_index += 1
+
+    positions_over_time[-1] = particle_dict['positions'].copy()
+
+    return positions_over_time, total_energy_over_time
+
+# ===== Simulation function ======
+def run_simulations(particle_dict, n_sims, param_dict, SA_function):
+    """
+    Run multiple simulations of particle annealing with varying parameters.
+
+    Args:
+    - particles_matrix: The matrix of particles to be used in the simulations.
+    - n_sims (int): Number of simulations to run for each parameter combination.
+    - param_dict (dict): Dictionary containing different sets of parameters for each simulation.
+        Each key in the dictionary represents a parameter name, and its value is a list of values for that parameter.
+    - SA_function (function): The function to be used for simulated annealing.
+
+    Returns:
+    - results_df (pandas DataFrame): DataFrame containing results of all simulations.
+    """
+
+
+    # Extract parameters for combinations
+    sort_mode_list = param_dict.pop('sort_mode_list', ['normal'])
+    move_mode_list = param_dict.pop('move_mode_list', ['random cartesian'])
+    cooling_functions = param_dict.pop('cooling_function_list', [exponential_decay_cooling])
+
+    # Prepare to collect results
+    results = []
+
+    possible_param_combinations = list(product(sort_mode_list, move_mode_list, cooling_functions))
+    number_of_possible_param_combination = len(possible_param_combinations)
+
+    print('Possible param combinations:', number_of_possible_param_combination)
+
+    sim_id = 0  # Initialize simulation ID
+
+    for sort_mode, move_mode, cooling_function in possible_param_combinations:
+        # Run the simulation
+        print('Progress %:', sim_id/(number_of_possible_param_combination*n_sims)*100)
+        print('sim_id:', sim_id)
+
+        # Update parameters for current combination
+        current_params = {key: value for key, value in param_dict.items()}
+        current_params['particle_dict'] = particle_dict  # Adding particles_matrix (input data) to the current params
+        current_params['sort_mode'] = sort_mode
+        current_params['move_mode'] = move_mode
+        current_params['cooling_function'] = cooling_function
+
+
+        # This variable is only made to remove particles from params when printed
+        params_without_data = current_params.copy()
+        params_without_data.pop('particle_dict', None)
+
+        print('Running simulation with params:', params_without_data)
+
+        for sim in range(n_sims):
+            
+            final_positions, total_energy_over_time = SA_function(**current_params)
+
+            # Save the results
+            result = {
+                'sim_id': sim_id,
+                'mode': sort_mode,
+                'move_mode': move_mode,
+                'cooling_function': cooling_function.__name__ if cooling_function else 'None',
+                'final_positions': final_positions,
+                'total_energy_over_time': total_energy_over_time
+            }
+            results.append(result)
+
+            sim_id += 1  # Increment simulation ID for the next run
+
+    # Create a DataFrame from the results
+    results_df = pd.DataFrame(results)
+
+    return results_df
+>>>>>>> Stashed changes
