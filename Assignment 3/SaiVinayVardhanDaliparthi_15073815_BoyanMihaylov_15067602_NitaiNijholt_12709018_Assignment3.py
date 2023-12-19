@@ -1,13 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import patches
+from matplotlib import animation as anim
 import seaborn as sns
 from itertools import combinations, product
 import pandas as pd
 
 
 # ===== Particle operation functions =====
-def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1):
+def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1, energy_only=False):
     """
     Calculate the electrostatic force between two particles and
     calculate the potential energy between two particles based on Coulomb's Law.
@@ -16,6 +17,7 @@ def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1):
         p_i (tuple): Position (x, y) of the first particle.
         p_j (tuple): Position (x, y) of the second particle.
         coulomb_constant (float, optional): Coulomb's constant, default is 1 for normalized calculations.
+        energy_only (bool, optional): Whether to return only the energy or also force. Defaults to False.
 
     Returns:
         numpy.ndarray: The 2D vector representing the force exerted on the first particle by the second.
@@ -31,21 +33,25 @@ def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1):
     dist_i_j = max(dist_i_j, min_dist)
     
     # Calculate the force vector using Coulomb's Law
-    force_i_j = coulomb_constant * r_i_j / (dist_i_j**3)
+    if energy_only:
+        force_i_j = None
+    else:
+        force_i_j = coulomb_constant * r_i_j / (dist_i_j**3)
 
     # Calculate the potential energy using Coulomb's Law
     energy_i_j = coulomb_constant / dist_i_j
 
-    return force_i_j, energy_i_j
+    return energy_i_j, force_i_j
 
 
-def get_energy_forces_total(particles):
+def get_energy_forces_total(particles, energy_only=False):
     """
     Calculate the total potential energy of a system of particles.
     Sum all the force vectors acting on each particle
     
     Args:
         particles (list or numpy.ndarray): A list of tuples or an n x 2 matrix representing the positions of n particles.
+        energy_only (bool, optional): Whether to return only the energy or also the net force on each particle. Defaults to False.
 
     Returns:
         float: The total potential energy of the system.
@@ -59,15 +65,19 @@ def get_energy_forces_total(particles):
     energies = np.zeros(len(particles))
 
     # Initialize an array to store the net force on each particle
-    net_forces = np.zeros_like(particles)  # Assuming 2D particles
+    if energy_only:
+        net_forces = None
+    else:
+        net_forces = np.zeros_like(particles)  # Assuming 2D particles
 
     # Calculate energy between each unique pair of particles
     for p1, p2 in combinations(enumerate(particles), 2):
-        force_vec, energy_pair = get_energy_force_2_particles(p1[1], p2[1])
+        energy_pair, force_vec = get_energy_force_2_particles(p1[1], p2[1])
         energies[p1[0]] += energy_pair*0.5
         energies[p2[0]] += energy_pair*0.5
-        net_forces[p1[0]] += force_vec
-        net_forces[p2[0]] -= force_vec
+        if not energy_only:
+            net_forces[p1[0]] += force_vec
+            net_forces[p2[0]] -= force_vec
     
     # Convert list of energies to numpy array and sum them to get total energy
     # total_energy = np.sum(np.array(energies))
@@ -289,10 +299,11 @@ def move_particle(particle_dict, radius=1, movement_scaler=1, blend_p=0.5, move_
     elif move_mode == 'blend':
 
         # Randomly select between random absolute and repell
-        if np.random.uniform() < blend_p:
-            new_positions = move_particle(particle_dict, radius, movement_scaler, move_mode='random polar absolute')
-        else:
-            new_positions = move_particle(particle_dict, radius, movement_scaler, move_mode='repell')
+        new_pos_det = move_particle(particle_dict, radius, movement_scaler, move_mode='repell')
+        new_pos_rand = move_particle(particle_dict, radius, movement_scaler, move_mode='random polar absolute')
+        dice_roll = np.random.uniform(size=particle_dict['positions'].shape[0])
+        dice_roll = np.reshape(dice_roll, (dice_roll.shape[0], 1))
+        new_positions = np.where(dice_roll < blend_p, new_pos_rand, new_pos_det)
 
     else:
         raise ValueError("move_mode must be one of 'random cartesian', 'random polar absolute', 'random polar relative', 'repell'")
@@ -318,17 +329,22 @@ def visualise_particles(particle_dict, radius=1, vector_scale=1, title="Particle
         fig, ax = plt.subplots()
     else:
         fig = ax.get_figure()
-    
-    # Visualise particle positions
-    coords = particle_dict['positions'].T
-    ax.scatter(coords[0], coords[1], s=20, c=particle_dict['energies'])
 
+    # Re-convert to numpy arrays
+    particle_dict['positions'] = np.array(particle_dict['positions'])
+    particle_dict['forces'] = np.array(particle_dict['forces'])
+    particle_dict['energies'] = np.array(particle_dict['energies'])
+    
     # Visualise particle forces
     for i in range(particle_dict['forces'].shape[0]):
         pos = particle_dict['positions'][i]
         dir = vector_scale * particle_dict['forces'][i]
-        ax.arrow(pos[0], pos[1], dir[0], dir[1], width=0.01, head_width=0.1, color='lightgrey')
+        ax.arrow(pos[0], pos[1], dir[0], dir[1], width=0.02, head_width=0.2, color='lightgrey')
         ax.annotate(i, pos)
+
+    # Visualise particle positions
+    coords = particle_dict['positions'].T
+    ax.scatter(coords[0], coords[1], s=40, c=particle_dict['energies'])
 
     # Create a circle patch with the same radius as used for the position generation
     circle = patches.Circle((0, 0), radius, fill=False, edgecolor='gray', linestyle='-')
@@ -368,16 +384,17 @@ def visualise_particles_at_sim_times(df_sim_results, local_sim_id, times, radius
     markov_lengths = df_sim_results_exploded['markov_length'].unique()
     possible_param_combinations = list(product(sort_modes, move_modes, cooling_functions, markov_lengths))
     fig, axs = plt.subplots(len(possible_param_combinations), len(times))
-    fig.set_size_inches(4*len(times), 5*len(possible_param_combinations))
+    fig.set_size_inches(3*len(times), 3.5*len(possible_param_combinations))
 
     # Plot particles for each parameter combination
     for i, (sort_mode, move_mode, cooling_function, markov_length) in enumerate(possible_param_combinations):
         for j, time in enumerate(times):
             ax = axs[i, j]
-            ax.set_title(f"t={time}\nSorting: {sort_mode}\nMoving: {move_mode}\nCooling: {cooling_function}\nChain length: {markov_length}")
+            ax.set_title(f"t={time}\nS: {sort_mode}\nM: {move_mode}\nC: {cooling_function}\nL: {markov_length}")
             particle_param_combination = particle_selection[(particle_selection['sort_mode'] == sort_mode) &
                                                             (particle_selection['move_mode'] == move_mode) &
-                                                            (particle_selection['cooling_function'] == cooling_function)]
+                                                            (particle_selection['cooling_function'] == cooling_function) &
+                                                            (particle_selection['markov_length'] == markov_length)]
             positions = particle_param_combination['positions_over_time'].values[0][time]
             forces = particle_param_combination['forces_over_time'].values[0][time]
             energies = particle_param_combination['energies_over_time'].values[0][time]
@@ -399,7 +416,7 @@ def plot_energy_landscape(positions, radius=1.0, ax=None):
         fig = ax.get_figure()
 
     # Recalculate energies at positions
-    energies, forces = get_energy_forces_total(positions)
+    energies, _ = get_energy_forces_total(positions, energy_only=True)
 
     # Create a meshgrid of x and y values
     x = np.linspace(-radius, radius, 100)
@@ -416,7 +433,7 @@ def plot_energy_landscape(positions, radius=1.0, ax=None):
             energy_total_pt = 0
             for k, pos in enumerate(positions):
                 if k != closest_pos_i:
-                    energy_total_pt += 0.5* get_energy_force_2_particles(grid_pt, pos)[1]
+                    energy_total_pt += 0.5* get_energy_force_2_particles(grid_pt, pos, energy_only=True)[0]
             Z[i, j] = energy_total_pt
     
     # Create a circle in the xy plane at z=0
@@ -495,7 +512,7 @@ def std_cooling(T_init, t, a, b, cr, std):
     std is the standard deviation of the energy"""
     return T_init / (1 + (T_init * np.log(2 - cr) / (3 * std)))
 
-# ====== Simulated annealing function ======
+# ====== Simulated annealing functions ======
 def sim_annealing_move_particles(particle_dict, time_range, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False):
     """
     Perform simulated annealing to update particle positions within a specified radius.
@@ -534,7 +551,7 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
         
         # Optionally decrease the movement scaler over time
         if decrease_step:
-            movement_scaler = movement_scaler * (1 - t/time_range)
+            movement_scaler = movement_scaler * (1 - 2**(t*10/time_range - 10))
         
         # At the beginning of each Markov chain, sort indices of particles to move based on the mode
         if sort_mode == 'random':
@@ -559,13 +576,100 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
 
             # Generate a new position for the particle
             new_pos_proposal = movement_func(particle_selection, radius, movement_scaler, T/T_init, move_mode)
-            total_energy_new = np.sum(particle_dict['energies'])
+            new_dict_proposal = particle_dict.copy()
+            update_particle_dict(new_dict_proposal, new_pos_proposal, [p_index])
+            total_energy_new = np.sum(new_dict_proposal['energies'])
 
             # Probabilistic acceptance of new position
             k = 1  # Boltzmann constant (normalized)
             alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
             if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
-                update_particle_dict(particle_dict, np.array([new_pos_proposal]), np.array([p_index]))
+                particle_dict = new_dict_proposal.copy()
+                total_energy_chain[m] = total_energy_new
+            else:
+                total_energy_chain[m] = total_energy_old
+
+        # Update temperature
+        if total_energy_chain.shape[0] > 3:
+            energy_std = np.std(total_energy_chain)
+        else:
+            energy_std = 1
+        T = cooling_function(T, t, a, b, cr, energy_std)
+        # print('timestep (t):', t)
+
+        total_energy_over_time[t] = total_energy_chain[-1]
+
+    positions_over_time[-1] = particle_dict['positions'].copy()
+    forces_over_time[-1] = particle_dict['forces'].copy()
+    energies_over_time[-1] = particle_dict['energies'].copy()
+
+    return positions_over_time, forces_over_time, energies_over_time, total_energy_over_time
+
+
+def sim_annealing_move_particles_parallel(particle_dict, time_range, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False):
+    """
+    Perform simulated annealing to update particle positions within a specified radius.
+    Unlike the previous function, this function perturbs multiple particles at once.
+    Per each time iteration a Markov chain is iterated through multiple times.
+
+    Args:
+        particle_dict (dict): An object containing the positions, forces and energies of all particles
+        time_range (int): Number of time steps to run the simulation for
+        markov_length (int): Length of Markov chain to run per time step
+        radius (float): The radius of the circle
+        T_init (float, optional): Initial temperature. Defaults to 1.
+        cooling_function (function, optional): Cooling function to use. Defaults to exponential_decay_cooling.
+        a (float, optional): Parameter for cooling function. Defaults to 100.
+        b (float, optional): Parameter for cooling function. Defaults to 1.
+        cr (float, optional): Parameter for cooling function. Defaults to 0.995.
+        movement_func (function, optional): Function to use for moving particles. Defaults to move_particle.
+        sort_mode (str, optional): Mode to use for sorting particles. Defaults to 'normal'.
+        move_mode (str, optional): Mode to use for moving particles. Defaults to 'random'.
+        movement_scaler (float, optional): Scaling factor for movement. Defaults to 1.
+        decrease_step (bool, optional): Whether to decrease the movement scaler over time. Defaults to False.
+    """
+
+    # Create running copy of particle_dict
+    particle_dict = particle_dict.copy()
+
+    if cooling_function is None:
+        raise ValueError("cooling_function must be provided")
+
+    T = T_init
+    total_energy_over_time = np.zeros(time_range)
+    positions_over_time = np.zeros((time_range + 1, particle_dict['positions'].shape[0], 2))
+    forces_over_time = np.zeros((time_range + 1, particle_dict['forces'].shape[0], 2))
+    energies_over_time = np.zeros((time_range + 1, particle_dict['energies'].shape[0]))
+
+    for t in range(time_range):
+        
+        # Optionally decrease the movement scaler over time
+        if decrease_step:
+            movement_scaler = movement_scaler * (1 - 2**(t*10/time_range - 10))
+
+        # Store current positions, forces and energies
+        positions_over_time[t] = particle_dict['positions'].copy()
+        forces_over_time[t] = particle_dict['forces'].copy()
+        energies_over_time[t] = particle_dict['energies'].copy()
+
+        total_energy_chain = np.zeros(markov_length)
+        for m in range(markov_length):
+            
+            # Cycle through particle indices
+            # p_index = particle_indices[m % particle_dict['positions'].shape[0]]
+            # particle_selection = particle_dict_element(particle_dict, p_index)
+            total_energy_old = np.sum(particle_dict['energies'])
+
+            # Generate a new position for the particle
+            new_pos_proposal = movement_func(particle_dict, radius, movement_scaler, T/T_init, move_mode)
+            energies_new, _ = get_energy_forces_total(new_pos_proposal, True)
+            total_energy_new = np.sum(energies_new)
+
+            # Probabilistic acceptance of new position
+            k = 1  # Boltzmann constant (normalized)
+            alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
+            if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
+                update_particle_dict(particle_dict, new_pos_proposal, np.arange(particle_dict['positions'].shape[0]))
                 total_energy_chain[m] = total_energy_new
             else:
                 total_energy_chain[m] = total_energy_old
