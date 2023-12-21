@@ -5,7 +5,7 @@ from matplotlib import animation as anim
 import seaborn as sns
 from itertools import combinations, product
 import pandas as pd
-
+import copy
 
 # ===== Particle operation functions =====
 def get_energy_force_2_particles(p_i, p_j, coulomb_constant=1, energy_only=False):
@@ -536,7 +536,7 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
     """
 
     # Create running copy of particle_dict
-    particle_dict = particle_dict.copy()
+    particle_dict = copy.deepcopy(particle_dict)
 
     if cooling_function is None:
         raise ValueError("cooling_function must be provided")
@@ -576,9 +576,12 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
                 particle_indices = np.arange(particle_dict['positions'].shape[0])  # Cycle through particles for 'normal' mode
 
             # Store current positions, forces and energies
-            positions_over_time[t] = particle_dict['positions'].copy()
-            forces_over_time[t] = particle_dict['forces'].copy()
-            energies_over_time[t] = particle_dict['energies'].copy()
+            # positions_over_time[t] = particle_dict['positions'].copy()
+            # forces_over_time[t] = particle_dict['forces'].copy()
+            # energies_over_time[t] = particle_dict['energies'].copy()
+            positions_over_time[t] = np.array(particle_dict['positions'])
+            forces_over_time[t] = np.array(particle_dict['forces'])
+            energies_over_time[t] = np.array(particle_dict['energies'])
             
             total_energy_chain = np.zeros(markov_length)
             for m in range(markov_length):
@@ -590,7 +593,7 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
 
                 # Generate a new position for the particle
                 new_pos_proposal = movement_func(particle_selection, radius, movement_scaler, T/T_init, move_mode)
-                new_dict_proposal = particle_dict.copy()
+                new_dict_proposal = copy.deepcopy(particle_dict)
                 update_particle_dict(new_dict_proposal, new_pos_proposal, [p_index])
                 total_energy_new = np.sum(new_dict_proposal['energies'])
 
@@ -598,7 +601,7 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
                 k = 1  # Boltzmann constant (normalized)
                 alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
                 if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
-                    particle_dict = new_dict_proposal.copy()
+                    particle_dict = copy.deepcopy(new_dict_proposal)
                     total_energy_chain[m] = total_energy_new
                 else:
                     total_energy_chain[m] = total_energy_old
@@ -622,9 +625,9 @@ def sim_annealing_move_particles(particle_dict, time_range, markov_length, radiu
                 dormant_at = t
                 print(f"Simulation dormant at t={t}")
 
-    positions_over_time[-1] = particle_dict['positions'].copy()
-    forces_over_time[-1] = particle_dict['forces'].copy()
-    energies_over_time[-1] = particle_dict['energies'].copy()
+    positions_over_time[-1] = np.array(particle_dict['positions'])
+    forces_over_time[-1] = np.array(particle_dict['forces'])
+    energies_over_time[-1] = np.array(particle_dict['energies'])
 
     return positions_over_time, forces_over_time, energies_over_time, total_energy_over_time
 
@@ -685,9 +688,9 @@ def sim_annealing_move_particles_parallel(particle_dict, time_range, markov_leng
                 movement_scaler = movement_scaler * (1 - 2**(t*10/time_range - 10))
 
             # Store current positions, forces and energies
-            positions_over_time[t] = particle_dict['positions'].copy()
-            forces_over_time[t] = particle_dict['forces'].copy()
-            energies_over_time[t] = particle_dict['energies'].copy()
+            positions_over_time[t] = np.array(particle_dict['positions'])
+            forces_over_time[t] = np.array(particle_dict['forces'])
+            energies_over_time[t] = np.array(particle_dict['energies'])
 
             total_energy_chain = np.zeros(markov_length)
             for m in range(markov_length):
@@ -730,9 +733,9 @@ def sim_annealing_move_particles_parallel(particle_dict, time_range, markov_leng
                 dormant_at = t
                 print(f"Simulation dormant at t={t}")
 
-    positions_over_time[-1] = particle_dict['positions'].copy()
-    forces_over_time[-1] = particle_dict['forces'].copy()
-    energies_over_time[-1] = particle_dict['energies'].copy()
+    positions_over_time[-1] = np.array(particle_dict['positions'])
+    forces_over_time[-1] = np.array(particle_dict['forces'])
+    energies_over_time[-1] = np.array(particle_dict['energies'])
 
     return positions_over_time, forces_over_time, energies_over_time, total_energy_over_time
 
