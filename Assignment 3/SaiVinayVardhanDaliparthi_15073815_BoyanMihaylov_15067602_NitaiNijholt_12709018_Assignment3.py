@@ -833,11 +833,15 @@ def unpack_time_data(run_data):
         pandas.DataFrame: A DataFrame containing the time data for each simulation
     """
 
+    print("Unpacking time data...")
+
     # Create separate DataFrame rows for each simulation step
     run_data['total_energy_timestep'] = run_data['total_energy_over_time'].apply(lambda x: list(enumerate(x)))
     run_data_exploded = run_data.explode('total_energy_timestep')
 
     # Split the tuple into two separate columns
     run_data_exploded[['time', 'total_energy']] = pd.DataFrame(run_data_exploded['total_energy_timestep'].tolist(), index=run_data_exploded.index)
+
+    print("Done unpacking time data.")
 
     return run_data_exploded
