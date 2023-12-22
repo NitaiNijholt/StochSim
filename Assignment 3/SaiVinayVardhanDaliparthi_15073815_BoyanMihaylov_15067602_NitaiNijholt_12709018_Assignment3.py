@@ -367,16 +367,19 @@ def visualise_particles(particle_dict, radius=1, vector_scale=1, title="Particle
         plt.show()
 
 
-def visualise_particles_at_sim_times(df_sim_results, local_sim_id, times, radius=1, vector_scale=0.1):
+def visualise_particles_at_sim_times(df_sim_results, local_sim_id, times, rec_increment=10, radius=1, vector_scale=0.1):
     """Creates a plot visualising the particle positions and velocities at specified times
     """
 
     # Create separate DataFrame rows for each simulation step
     df_sim_results_exploded = unpack_time_data(df_sim_results)
+    df_sim_results_exploded['evaluation_number'] = df_sim_results_exploded['evaluation_number'].apply(lambda x: int(x[0]))
 
     # Construct particle selection dictionary for specific simulations and times
-    particle_selection = df_sim_results_exploded[(df_sim_results_exploded['local_sim_id'] == local_sim_id) & (df_sim_results_exploded['time'].isin(times))]
-    
+    particle_selection = df_sim_results_exploded[(df_sim_results_exploded['local_sim_id'] == local_sim_id) & (df_sim_results_exploded['evaluation_number'].isin(times))]
+    # print(df_sim_results_exploded['evaluation_number'])
+    # print(particle_selection)
+
     # Set up plots for each parameter combination
     sort_modes = df_sim_results_exploded['sort_mode'].unique()
     move_modes = df_sim_results_exploded['move_mode'].unique()
@@ -395,9 +398,9 @@ def visualise_particles_at_sim_times(df_sim_results, local_sim_id, times, radius
                                                             (particle_selection['move_mode'] == move_mode) &
                                                             (particle_selection['cooling_function'] == cooling_function) &
                                                             (particle_selection['markov_length'] == markov_length)]
-            positions = particle_param_combination['positions_over_time'].values[0][time]
-            forces = particle_param_combination['forces_over_time'].values[0][time]
-            energies = particle_param_combination['energies_over_time'].values[0][time]
+            positions = particle_param_combination['positions_over_time'].values[0][time//rec_increment]
+            forces = particle_param_combination['forces_over_time'].values[0][time//rec_increment]
+            energies = particle_param_combination['energies_over_time'].values[0][time//rec_increment]
             particle_dict = {'positions': positions, 'forces': forces, 'energies': energies}
             # print(particle_dict['forces'])
             visualise_particles(particle_dict, radius=radius, vector_scale=vector_scale, ax=ax)
@@ -513,7 +516,7 @@ def std_cooling(T_init, t, a, b, cr, std):
     return T_init / (1 + (T_init * np.log(2 - cr) / (3 * std)))
 
 # ====== Simulated annealing functions ======
-def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False):
+def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False, rec_increment=10):
     """
     Perform simulated annealing to update particle positions within a specified radius.
     Per each time iteration a Markov chain is iterated through multiple times.
@@ -542,13 +545,16 @@ def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, 
         raise ValueError("cooling_function must be provided")
 
     T = T_init
-    total_energy_over_time = np.zeros(n_evals)
-    positions_over_time = np.zeros((n_evals + 1, particle_dict['positions'].shape[0], 2))
-    forces_over_time = np.zeros((n_evals + 1, particle_dict['forces'].shape[0], 2))
-    energies_over_time = np.zeros((n_evals + 1, particle_dict['energies'].shape[0]))
+
+    n_records = n_evals // rec_increment
+    total_energy_over_time = np.zeros(n_records)
+    positions_over_time = np.zeros((n_records + 1, particle_dict['positions'].shape[0], 2))
+    forces_over_time = np.zeros((n_records + 1, particle_dict['forces'].shape[0], 2))
+    energies_over_time = np.zeros((n_records + 1, particle_dict['energies'].shape[0]))
 
     cooling_steps = int(np.ceil(n_evals / markov_length))
     eval_ct = 0
+    record_ct = 0
 
     for t in range(cooling_steps):
         
@@ -579,9 +585,11 @@ def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, 
             if decrease_step:
                 movement_scaler = movement_scaler * (1 - 2**(eval_ct*10/n_evals - 10))
             
-            positions_over_time[eval_ct] = np.array(particle_dict['positions'])
-            forces_over_time[eval_ct] = np.array(particle_dict['forces'])
-            energies_over_time[eval_ct] = np.array(particle_dict['energies'])
+            # Store current positions, forces and energies
+            if eval_ct % rec_increment == 0:
+                positions_over_time[record_ct] = np.array(particle_dict['positions'])
+                forces_over_time[record_ct] = np.array(particle_dict['forces'])
+                energies_over_time[record_ct] = np.array(particle_dict['energies'])
             
             # Cycle through particle indices
             p_index = particle_indices[m % particle_dict['positions'].shape[0]]
@@ -603,7 +611,9 @@ def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, 
             else:
                 total_energy_chain[m] = total_energy_old
 
-            total_energy_over_time[eval_ct] = total_energy_chain[m]
+            if eval_ct % rec_increment == 0:
+                total_energy_over_time[record_ct] = total_energy_chain[m]
+                record_ct += 1
 
             eval_ct += 1
 
@@ -623,7 +633,7 @@ def sim_annealing_move_particles(particle_dict, n_evals, markov_length, radius, 
     return positions_over_time, forces_over_time, energies_over_time, total_energy_over_time
 
 
-def sim_annealing_move_particles_parallel(particle_dict, time_range, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False):
+def sim_annealing_move_particles_parallel(particle_dict, n_evals, markov_length, radius, T_init=1, cooling_function=exponential_decay_cooling, a=100, b=1, cr=0.995, movement_func=move_particle, sort_mode='normal', move_mode='random', movement_scaler=1, decrease_step=False, rec_increment=10):
     """
     Perform simulated annealing to update particle positions within a specified radius.
     Unlike the previous function, this function perturbs multiple particles at once.
@@ -647,82 +657,76 @@ def sim_annealing_move_particles_parallel(particle_dict, time_range, markov_leng
     """
 
     # Create running copy of particle_dict
-    particle_dict = particle_dict.copy()
+    particle_dict = copy.deepcopy(particle_dict)
 
     if cooling_function is None:
         raise ValueError("cooling_function must be provided")
 
     T = T_init
-    total_energy_over_time = np.zeros(time_range)
-    positions_over_time = np.zeros((time_range + 1, particle_dict['positions'].shape[0], 2))
-    forces_over_time = np.zeros((time_range + 1, particle_dict['forces'].shape[0], 2))
-    energies_over_time = np.zeros((time_range + 1, particle_dict['energies'].shape[0]))
 
-    # Variable counting the steps with insignificant change in energy
-    unperturbed_ct = 0
-    diff_treshold = 1e-8
-    dormant_treshold = time_range*0.5
-    dormant_at = -1
+    n_records = n_evals // rec_increment
+    total_energy_over_time = np.zeros(n_records)
+    positions_over_time = np.zeros((n_records + 1, particle_dict['positions'].shape[0], 2))
+    forces_over_time = np.zeros((n_records + 1, particle_dict['forces'].shape[0], 2))
+    energies_over_time = np.zeros((n_records + 1, particle_dict['energies'].shape[0]))
 
-    for t in range(time_range):
+    cooling_steps = int(np.ceil(n_evals / markov_length))
+    eval_ct = 0
+    record_ct = 0
+
+    for t in range(cooling_steps):
+
+        if eval_ct >= n_evals:
+            break
+
         
-        # Check if significant change in energy occured
-        if t > 1:
-            if np.abs(total_energy_over_time[t - 1] - total_energy_over_time[t - 2]) < diff_treshold:
-                unperturbed_ct += 1
-            else:
-                unperturbed_ct = 0
 
-        if unperturbed_ct < dormant_treshold:
+        total_energy_chain = np.zeros(markov_length)
+        for m in range(markov_length):
+
+            if eval_ct >= n_evals:
+                break
+            
             # Optionally decrease the movement scaler over time
             if decrease_step:
-                movement_scaler = movement_scaler * (1 - 2**(t*10/time_range - 10))
+                movement_scaler = movement_scaler * (1 - 2**(eval_ct * 10 / n_evals - 10))
 
             # Store current positions, forces and energies
-            positions_over_time[t] = np.array(particle_dict['positions'])
-            forces_over_time[t] = np.array(particle_dict['forces'])
-            energies_over_time[t] = np.array(particle_dict['energies'])
+            if eval_ct % rec_increment == 0:
+                positions_over_time[record_ct] = np.array(particle_dict['positions'])
+                forces_over_time[record_ct] = np.array(particle_dict['forces'])
+                energies_over_time[record_ct] = np.array(particle_dict['energies'])
 
-            total_energy_chain = np.zeros(markov_length)
-            for m in range(markov_length):
-                
-                # Cycle through particle indices
-                # p_index = particle_indices[m % particle_dict['positions'].shape[0]]
-                # particle_selection = particle_dict_element(particle_dict, p_index)
-                total_energy_old = np.sum(particle_dict['energies'])
+            # Cycle through particle indices
+            # p_index = particle_indices[m % particle_dict['positions'].shape[0]]
+            # particle_selection = particle_dict_element(particle_dict, p_index)
+            total_energy_old = np.sum(particle_dict['energies'])
 
-                # Generate a new position for the particle
-                new_pos_proposal = movement_func(particle_dict, radius, movement_scaler, T/T_init, move_mode)
-                energies_new, _ = get_energy_forces_total(new_pos_proposal, True)
-                total_energy_new = np.sum(energies_new)
+            # Generate a new position for the particle
+            new_pos_proposal = movement_func(particle_dict, radius, movement_scaler, T/T_init, move_mode)
+            energies_new, _ = get_energy_forces_total(new_pos_proposal, True)
+            total_energy_new = np.sum(energies_new)
 
-                # Probabilistic acceptance of new position
-                k = 1  # Boltzmann constant (normalized)
-                alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
-                if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
-                    update_particle_dict(particle_dict, new_pos_proposal, np.arange(particle_dict['positions'].shape[0]))
-                    total_energy_chain[m] = total_energy_new
-                else:
-                    total_energy_chain[m] = total_energy_old
-
-            # Update temperature
-            if total_energy_chain.shape[0] > 3:
-                energy_std = np.std(total_energy_chain)
+            # Probabilistic acceptance of new position
+            k = 1  # Boltzmann constant (normalized)
+            alpha = np.min([np.exp(-(total_energy_new - total_energy_old) / (T * k)), 1])
+            if (total_energy_new < total_energy_old) or (np.random.uniform() <= alpha):
+                update_particle_dict(particle_dict, new_pos_proposal, np.arange(particle_dict['positions'].shape[0]))
+                total_energy_chain[m] = total_energy_new
             else:
-                energy_std = 1
-            T = cooling_function(T, t, a, b, cr, energy_std)
-            # print('timestep (t):', t)
+                total_energy_chain[m] = total_energy_old
+            
+            if eval_ct % rec_increment == 0:
+                total_energy_over_time[record_ct] = total_energy_chain[m]
+                record_ct += 1
 
-            total_energy_over_time[t] = total_energy_chain[-1]
+        # Update temperature
+        if total_energy_chain.shape[0] > 3:
+            energy_std = np.std(total_energy_chain)
         else:
-            total_energy_over_time[t] = total_energy_over_time[t - 1]
-            positions_over_time[t] = positions_over_time[t - 1]
-            forces_over_time[t] = forces_over_time[t - 1]
-            energies_over_time[t] = energies_over_time[t - 1]
-
-            if dormant_at == -1:
-                dormant_at = t
-                print(f"Simulation dormant at t={t}")
+            energy_std = 1
+        T = cooling_function(T, t, a, b, cr, energy_std)
+        # print('timestep (t):', t)
 
     positions_over_time[-1] = np.array(particle_dict['positions'])
     forces_over_time[-1] = np.array(particle_dict['forces'])
@@ -757,6 +761,7 @@ def run_simulations(n_sims, param_dict, SA_function):
     n_particles = param_dict.pop('n_particles', 10)
     radius = param_dict.pop('radius', 1)
     decrease_step = param_dict.pop('decrease_step', False)
+    rec_increment = param_dict.pop('rec_increment', 10)
 
     # Prepare to collect results
     results = []
@@ -782,6 +787,7 @@ def run_simulations(n_sims, param_dict, SA_function):
         current_params['markov_length'] = markov_length
         current_params['radius'] = radius
         current_params['decrease_step'] = decrease_step
+        current_params['rec_increment'] = rec_increment
 
         # This variable is only made to remove particles from params when printed
         params_without_data = current_params.copy()
@@ -809,7 +815,8 @@ def run_simulations(n_sims, param_dict, SA_function):
                 'positions_over_time': pos_over_time,
                 'forces_over_time': forces_over_time,
                 'energies_over_time': energies_over_time,
-                'total_energy_over_time': total_energy_over_time
+                'total_energy_over_time': total_energy_over_time,
+                'evaluation_number': np.arange(pos_over_time.shape[0]) * rec_increment
             }
             results.append(result)
 
@@ -840,7 +847,7 @@ def unpack_time_data(run_data):
     run_data_exploded = run_data.explode('total_energy_timestep')
 
     # Split the tuple into two separate columns
-    run_data_exploded[['time', 'total_energy']] = pd.DataFrame(run_data_exploded['total_energy_timestep'].tolist(), index=run_data_exploded.index)
+    run_data_exploded[['rec_ID', 'total_energy']] = pd.DataFrame(run_data_exploded['total_energy_timestep'].tolist(), index=run_data_exploded.index)
 
     print("Done unpacking time data.")
 
