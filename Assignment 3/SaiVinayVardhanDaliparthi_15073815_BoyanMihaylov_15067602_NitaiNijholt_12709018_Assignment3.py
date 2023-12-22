@@ -674,11 +674,13 @@ def sim_annealing_move_particles_parallel(particle_dict, n_evals, markov_length,
     eval_ct = 0
     record_ct = 0
 
+    print(f"n_records: {n_records}")
+    print(f"rec_increment: {rec_increment}")
+
     for t in range(cooling_steps):
 
         if eval_ct >= n_evals:
             break
-
         
 
         total_energy_chain = np.zeros(markov_length)
@@ -719,6 +721,8 @@ def sim_annealing_move_particles_parallel(particle_dict, n_evals, markov_length,
             if eval_ct % rec_increment == 0:
                 total_energy_over_time[record_ct] = total_energy_chain[m]
                 record_ct += 1
+            
+            eval_ct += 1
 
         # Update temperature
         if total_energy_chain.shape[0] > 3:
