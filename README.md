@@ -2,9 +2,10 @@
 This repository contains the files used for the assignments of the course Stochastic Simulation (UvA).
 
 
-## Assignment 3
+# Assignment 3
 
-# Abstract
+
+Abstract:
 
 The use of simulated annealing (SA) has proven effective in finding global energy minima
 in various problems across domains. This paper uses SA to minimise the total energy
